@@ -1,0 +1,22 @@
+Submission Name: Collaborative 3D Sketchbook - Create Together in VR
+Tagline: A controller-free, real-time social 3D creation tool for Meta Quest.
+
+Description:
+The Collaborative 3D Sketchbook is a reimagining of creative expression in the spatial era. Built using the Immersive Web SDK (IWSDK) and WebXR, it allows users to sketch 3D geometry in real-time using natural hand gestures—no controllers required.
+
+Inspiration:
+We wanted to remove the barrier between thought and creation. Traditional controllers can feel like tools; your hands feel like *you*. By leveraging the precise hand tracking of the Meta Quest, we created an interface that feels magical yet intuitive. The social aspect was equally important; creativity is often collaborative, and sharing a virtual space to build together amplifies the fun.
+
+Technical Implementation:
+The project is built on a robust Three.js foundation, utilizing the WebXR Device API for high-performance rendering and input handling.
+- **Hand Interactions**: We implemented a custom gesture recognition system that detects pinching for drawing and palm orientation for UI activation. This ensures a seamless "minority report" style interface.
+- **Networking**: A custom WebSocket-based synchronization layer (mocked for this demo) handles the replication of stroke data, ensuring that what one user draws, others see instantly.
+- **Performance**: We utilized instanced rendering and optimized geometry merging to ensure a smooth 90Hz experience on Quest hardware.
+
+Future Plans:
+We plan to expand this foundation into a full creative suite. Upcoming features include:
+- **GLTF/OBJ Export**: Allowing users to take their creations into professional 3D software.
+- **Persistent Rooms**: Saving room states to the cloud so teams can return to their projects.
+- **Mixed Reality Mode**: Allowing users to sketch over their physical environment using Passthrough.
+
+This project demonstrates the power of the Immersive Web SDK to deliver native-quality experiences directly in the browser.

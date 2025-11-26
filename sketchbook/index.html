@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Collaborative 3D Sketchbook</title>
+  <style>
+    body {
+      margin: 0;
+      overflow: hidden;
+      background-color: #f0f0f0;
+    }
+
+    #info {
+      position: absolute;
+      top: 10px;
+      width: 100%;
+      text-align: center;
+      color: #333;
+      font-family: sans-serif;
+      pointer-events: none;
+    }
+  </style>
+</head>
+
+<body>
+  <div id="info">
+    Collaborative 3D Sketchbook<br />
+    Enter VR to start drawing. Pinch to draw. Palm up for menu.
+  </div>
+  <script type="module" src="/src/main.ts"></script>
+</body>
+
+</html>
