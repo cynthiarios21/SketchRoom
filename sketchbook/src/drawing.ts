@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { Line2 } from 'three/addons/lines/Line2.js';
-import { LineMaterial } from 'three/addons/lines/LineMaterial.js';
 import { LineGeometry } from 'three/addons/lines/LineGeometry.js';
+import { LineMaterial } from 'three/addons/lines/LineMaterial.js';
 
 export interface Stroke {
     points: THREE.Vector3[];
@@ -50,8 +50,10 @@ export class DrawingSystem {
         this.brushSize = 0.003; // 3mm default (finer)
         this.material = new THREE.MeshStandardMaterial({
             color: this.brushColor,
-            roughness: 0.5,
-            metalness: 0.1
+            roughness: 0.4,
+            metalness: 0.2,
+            emissive: this.brushColor,
+            emissiveIntensity: 0.3
         });
 
         this.lineMaterial = new LineMaterial({
@@ -303,10 +305,14 @@ export class DrawingSystem {
         const path = new THREE.CatmullRomCurve3(stroke.points);
         const geometry = new THREE.TubeGeometry(path, stroke.points.length, stroke.size, 8, false);
 
-        const mesh = new THREE.Mesh(geometry, this.material.clone());
-        if (mesh.material instanceof THREE.MeshStandardMaterial) {
-            mesh.material.color.setHex(stroke.color);
+        const material = this.material.clone();
+        if (material instanceof THREE.MeshStandardMaterial) {
+            material.color.setHex(stroke.color);
+            material.emissive.setHex(stroke.color);
+            material.emissiveIntensity = 0.4; // Glow effect
         }
+        const mesh = new THREE.Mesh(geometry, material);
+        mesh.castShadow = true;
         this.scene.add(mesh);
         stroke.mesh = mesh;
     }
@@ -317,6 +323,10 @@ export class DrawingSystem {
 
     public setSize(size: number): void {
         this.brushSize = size;
+    }
+
+    public getSize(): number {
+        return this.brushSize;
     }
 
     public undo(): void {
@@ -338,6 +348,14 @@ export class DrawingSystem {
                 this.strokes.push(stroke);
             }
         }
+    }
+
+    public canUndo(): boolean {
+        return this.strokes.length > 0;
+    }
+
+    public canRedo(): boolean {
+        return this.undoneStrokes.length > 0;
     }
 
     public deleteStroke(mesh: THREE.Mesh | Line2): void {

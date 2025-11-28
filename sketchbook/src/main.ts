@@ -1,11 +1,12 @@
 import * as THREE from 'three';
-import { VRButton } from 'three/addons/webxr/VRButton.js';
-import { XRHandModelFactory } from 'three/addons/webxr/XRHandModelFactory.js';
-import { XRControllerModelFactory } from 'three/addons/webxr/XRControllerModelFactory.js';
-import { NetworkManager } from './networking';
-import { DrawingSystem } from './drawing';
-import { ColorPalette } from './ColorPalette';
 import { Line2 } from 'three/addons/lines/Line2.js';
+import { VRButton } from 'three/addons/webxr/VRButton.js';
+import { XRControllerModelFactory } from 'three/addons/webxr/XRControllerModelFactory.js';
+import { XRHandModelFactory } from 'three/addons/webxr/XRHandModelFactory.js';
+import { ColorPalette } from './ColorPalette';
+import { DrawingSystem } from './drawing';
+import { NetworkManager } from './networking';
+import { ParticleSystem } from './ParticleSystem';
 
 // Constants
 const INTERACTION_DISTANCE_SHADE = 0.02;
@@ -61,6 +62,14 @@ class App {
     private teleportMarker!: THREE.Mesh;
     private wasXButtonPressed: boolean = false;
 
+    // Drawing Preview
+    private previewSphere!: THREE.Mesh;
+
+    // Visual Effects
+    private particleSystem!: ParticleSystem;
+    private lastDrawPosition: THREE.Vector3 = new THREE.Vector3();
+    private clock: THREE.Clock = new THREE.Clock();
+
     constructor() {
         this.container = document.createElement('div');
         document.body.appendChild(this.container);
@@ -102,29 +111,35 @@ class App {
         this.drawingSystem = new DrawingSystem(this.scene);
         this.networkManager = new NetworkManager();
         this.colorPalette = new ColorPalette();
-        this.scene.background = new THREE.Color(0xffffff);
-        this.scene.fog = new THREE.Fog(0xffffff, 5, 30);
+        // Create starfield background
+        this.createStarfield();
+
+        // Enhanced fog with subtle color tint
+        this.scene.fog = new THREE.FogExp2(0x0a1a2e, 0.012); // Darker, more atmospheric
 
         const gridGroup = new THREE.Group();
 
-        // Helper to create consistent grids
-        const createGrid = (size: number, divisions: number, color: number) => {
+        // Helper to create modern grids with glow
+        const createGrid = (size: number, divisions: number, color: number, opacity: number = 0.15) => {
             const grid = new THREE.GridHelper(size, divisions, color, color);
-            (grid.material as THREE.Material).transparent = true;
-            (grid.material as THREE.Material).opacity = 0.2;
+            const material = grid.material as THREE.LineBasicMaterial;
+            material.transparent = true;
+            material.opacity = opacity;
+            material.color.setHex(color);
             return grid;
         };
 
-        const gridColor = 0xcccccc; // Light Gray
         const size = 40;
         const divisions = 40;
 
-        // Floor (Solid)
+        // Floor (Reflective with gradient)
         const floorGeometry = new THREE.PlaneGeometry(1000, 1000);
         const floorMaterial = new THREE.MeshStandardMaterial({
-            color: 0xffffff,
-            roughness: 0.8,
-            metalness: 0.1
+            color: 0x0a1929, // Dark blue-gray
+            roughness: 0.3,
+            metalness: 0.6,
+            emissive: 0x0a1929,
+            emissiveIntensity: 0.1
         });
         const floor = new THREE.Mesh(floorGeometry, floorMaterial);
         floor.rotation.x = -Math.PI / 2;
@@ -132,40 +147,46 @@ class App {
         floor.receiveShadow = true;
         this.scene.add(floor);
 
-        // Floor Grid
-        const floorGrid = createGrid(size, divisions, gridColor);
+        // Floor Grid (Cyan tint)
+        const floorGrid = createGrid(size, divisions, 0x00d4ff, 0.25);
         gridGroup.add(floorGrid);
 
-        // Ceiling
-        const ceiling = createGrid(size, divisions, gridColor);
+        // Ceiling (Purple tint, more subtle)
+        const ceiling = createGrid(size, divisions, 0x9d4edd, 0.1);
         ceiling.position.y = 10;
         gridGroup.add(ceiling);
 
-        // Back Wall
-        const backWall = createGrid(size, divisions, gridColor);
+        // Back Wall (Blue tint)
+        const backWall = createGrid(size, divisions, 0x4cc9f0, 0.15);
         backWall.rotation.x = Math.PI / 2;
         backWall.position.set(0, 5, -20);
         gridGroup.add(backWall);
 
-        // Front Wall
-        const frontWall = createGrid(size, divisions, gridColor);
+        // Front Wall (Blue tint)
+        const frontWall = createGrid(size, divisions, 0x4cc9f0, 0.15);
         frontWall.rotation.x = Math.PI / 2;
         frontWall.position.set(0, 5, 20);
         gridGroup.add(frontWall);
 
-        // Left Wall
-        const leftWall = createGrid(size, divisions, gridColor);
+        // Left Wall (Purple tint)
+        const leftWall = createGrid(size, divisions, 0x7209b7, 0.15);
         leftWall.rotation.z = Math.PI / 2;
         leftWall.position.set(-20, 5, 0);
         gridGroup.add(leftWall);
 
-        // Right Wall
-        const rightWall = createGrid(size, divisions, gridColor);
+        // Right Wall (Purple tint)
+        const rightWall = createGrid(size, divisions, 0x7209b7, 0.15);
         rightWall.rotation.z = Math.PI / 2;
         rightWall.position.set(20, 5, 0);
         gridGroup.add(rightWall);
 
         this.scene.add(gridGroup);
+
+        // Initialize particle system
+        this.particleSystem = new ParticleSystem(this.scene);
+
+        // Add ambient floating particles
+        this.createAmbientParticles();
 
         this.initLights();
         this.initXR();
@@ -175,15 +196,50 @@ class App {
     }
 
     private initLights(): void {
-        // Ambient light for base illumination
-        const ambient = new THREE.HemisphereLight(0xffffff, 0xffffff, 0.6);
+        // Ambient light for base illumination (cooler tone)
+        const ambient = new THREE.HemisphereLight(0x4cc9f0, 0x1a1a2e, 0.4);
         this.scene.add(ambient);
 
-        // Main directional light
-        const light = new THREE.DirectionalLight(0xffffff, 1);
-        light.position.set(5, 10, 7);
-        light.castShadow = true;
-        this.scene.add(light);
+        // Main directional light (key light)
+        const mainLight = new THREE.DirectionalLight(0xffffff, 1.2);
+        mainLight.position.set(5, 10, 7);
+        mainLight.castShadow = true;
+
+        // Enhanced shadow quality
+        mainLight.shadow.mapSize.width = 2048;
+        mainLight.shadow.mapSize.height = 2048;
+        mainLight.shadow.camera.near = 0.5;
+        mainLight.shadow.camera.far = 50;
+        mainLight.shadow.camera.left = -20;
+        mainLight.shadow.camera.right = 20;
+        mainLight.shadow.camera.top = 20;
+        mainLight.shadow.camera.bottom = -20;
+        this.scene.add(mainLight);
+
+        // Soft shadows
+        this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+
+        // Accent Light 1 - Cyan (left side)
+        const accentLight1 = new THREE.PointLight(0x00d4ff, 0.8, 15);
+        accentLight1.position.set(-8, 3, -5);
+        this.scene.add(accentLight1);
+
+        // Accent Light 2 - Magenta (right side)
+        const accentLight2 = new THREE.PointLight(0xff006e, 0.8, 15);
+        accentLight2.position.set(8, 3, -5);
+        this.scene.add(accentLight2);
+
+        // Accent Light 3 - Yellow (back)
+        const accentLight3 = new THREE.PointLight(0xffbe0b, 0.6, 12);
+        accentLight3.position.set(0, 4, 10);
+        this.scene.add(accentLight3);
+
+        // Rim light (purple, from behind)
+        const rimLight = new THREE.SpotLight(0x9d4edd, 0.5);
+        rimLight.position.set(0, 5, -15);
+        rimLight.angle = Math.PI / 4;
+        rimLight.penumbra = 0.3;
+        this.scene.add(rimLight);
     }
 
     private initXR(): void {
@@ -201,10 +257,15 @@ class App {
         this.hand1 = this.renderer.xr.getHand(0);
         this.hand1.userData.id = 'hand-right';
 
-        // Visual Cursor 1 (Right)
-        const cursorGeometry = new THREE.SphereGeometry(0.01, 16, 16);
-        const cursorMaterial = new THREE.MeshBasicMaterial({ color: 0xffffff, opacity: 0.8, transparent: true });
+        // Enhanced Cursor 1 (Right) - Glowing Ring
+        const cursorGeometry = new THREE.TorusGeometry(0.012, 0.003, 16, 32);
+        const cursorMaterial = new THREE.MeshBasicMaterial({
+            color: 0x00d4ff,
+            transparent: true,
+            opacity: 0.9
+        });
         this.cursor1 = new THREE.Mesh(cursorGeometry, cursorMaterial);
+        this.cursor1.userData.emissiveColor = 0x00d4ff;
         this.scene.add(this.cursor1);
 
         this.hand1.add(handModelFactory.createHandModel(this.hand1));
@@ -217,9 +278,25 @@ class App {
         this.hand2 = this.renderer.xr.getHand(1);
         this.hand2.userData.id = 'hand-left';
 
-        // Visual Cursor 2 (Left)
-        this.cursor2 = new THREE.Mesh(cursorGeometry, cursorMaterial.clone());
+        // Enhanced Cursor 2 (Left) - Glowing Ring
+        this.cursor2 = new THREE.Mesh(cursorGeometry.clone(), cursorMaterial.clone());
+        this.cursor2.userData.emissiveColor = 0x00d4ff;
         this.scene.add(this.cursor2);
+
+        // Drawing Preview Sphere
+        const previewGeometry = new THREE.SphereGeometry(0.005, 16, 16); // Will be updated dynamically
+        const previewMaterial = new THREE.MeshStandardMaterial({
+            color: this.colorPalette.getActiveColor(),
+            emissive: this.colorPalette.getActiveColor(),
+            emissiveIntensity: 0.6,
+            transparent: true,
+            opacity: 0.5,
+            roughness: 0.3,
+            metalness: 0.2
+        });
+        this.previewSphere = new THREE.Mesh(previewGeometry, previewMaterial);
+        this.previewSphere.visible = false;
+        this.scene.add(this.previewSphere);
 
         this.hand2.add(handModelFactory.createHandModel(this.hand2));
         this.userGroup.add(this.hand2); // Add to user rig
@@ -289,9 +366,9 @@ class App {
     private initColorPalette(): void {
         this.paletteGroup = new THREE.Group();
 
-        // Backing Panel (Container) with Rounded Corners
-        const panelWidth = 0.8;
-        const panelHeight = 0.22; // Increased height for text
+        // VR-Optimized Panel (Vertical orientation)
+        const panelWidth = 0.4;  // Narrower
+        const panelHeight = 0.6; // Taller for vertical layout
         const panelDepth = 0.01;
         const radius = 0.05;
 
@@ -316,75 +393,185 @@ class App {
             bevelEnabled: false
         });
 
-        // Center the geometry
         panelGeometry.center();
 
-        const panelMaterial = new THREE.MeshStandardMaterial({
-            color: 0xffffff, // White
-            roughness: 0.1,
-            metalness: 0.0,
+        // Glassmorphism panel material
+        const panelMaterial = new THREE.MeshPhysicalMaterial({
+            color: 0x1a1a2e,
+            roughness: 0.2,
+            metalness: 0.1,
             transparent: true,
-            opacity: 0.9
+            opacity: 0.4,
+            transmission: 0.3,
+            thickness: 0.5,
+            clearcoat: 1.0,
+            clearcoatRoughness: 0.1
         });
         const panel = new THREE.Mesh(panelGeometry, panelMaterial);
-        panel.position.z = -0.02; // Slightly behind spheres
+        panel.position.z = -0.02;
         this.paletteGroup.add(panel);
 
-        // Border (Outline)
+        // Glowing border with animation
         const points = shape.getPoints();
         const borderGeometry = new THREE.BufferGeometry().setFromPoints(points);
-        const border = new THREE.LineLoop(borderGeometry, new THREE.LineBasicMaterial({ color: 0xcccccc }));
-        // Align border with front face of panel
+        const border = new THREE.LineLoop(borderGeometry, new THREE.LineBasicMaterial({
+            color: 0x00d4ff,
+            transparent: true,
+            opacity: 0.8
+        }));
         border.position.z = panelDepth / 2 + 0.001;
         panel.add(border);
+        panel.userData.border = border;
 
-        // Eraser Instruction Label
-        const label = this.createLabel("Press 'A' to Erase");
-        label.position.set(0, -0.08, 0.02); // Moved down slightly
-        this.paletteGroup.add(label);
+        // Active Color Indicator (Center, prominent)
+        const activeGeometry = new THREE.SphereGeometry(0.05, 32, 32);
+        const activeMaterial = new THREE.MeshStandardMaterial({
+            color: this.colorPalette.getActiveColor(),
+            emissive: this.colorPalette.getActiveColor(),
+            emissiveIntensity: 1.0,
+            roughness: 0.2,
+            metalness: 0.3
+        });
+        const activeIndicator = new THREE.Mesh(activeGeometry, activeMaterial);
+        activeIndicator.position.set(0, 0.05, 0.02);
+        activeIndicator.userData.isActiveIndicator = true;
+        this.paletteGroup.add(activeIndicator);
 
-        // Undo Button
-        this.undoButton = this.createButton("Undo", 0.15, 0.06);
-        this.undoButton.position.set(-0.25, -0.03, 0.02); // Left side, below colors
-        this.undoButton.userData = { isButton: true, action: 'undo' };
-        this.paletteGroup.add(this.undoButton);
-
-        // Clear Button
-        this.clearButton = this.createButton("Clear", 0.15, 0.06);
-        this.clearButton.position.set(0.25, -0.03, 0.02); // Right side, below colors
-        this.clearButton.userData = { isButton: true, action: 'clear' };
-        this.paletteGroup.add(this.clearButton);
+        // "Active Color" label
+        const activeLabel = this.createLabel("Active Color", 0xaaaaaa);
+        activeLabel.scale.setScalar(0.5);
+        activeLabel.position.set(0, -0.02, 0.02);
+        this.paletteGroup.add(activeLabel);
 
         const colors = this.colorPalette.getSlots();
+        const colorNames = ["Red", "Orange", "Yellow", "Green", "Blue", "Purple"];
 
-        // Create 6 color spheres in horizontal row - FLOATING PANEL
+        // Arc layout for color spheres (180° semicircle)
+        const arcRadius = 0.15;
+        const arcStartAngle = Math.PI; // Start at left (180°)
+        const arcEndAngle = 0; // End at right (0°)
+        const angleStep = (arcStartAngle - arcEndAngle) / (colors.length - 1);
+
         colors.forEach((color, index) => {
-            const geometry = new THREE.SphereGeometry(0.04, 32, 32);
+            // Larger spheres for VR (50% bigger)
+            const geometry = new THREE.SphereGeometry(0.06, 32, 32);
             const material = new THREE.MeshStandardMaterial({
                 color: color,
                 emissive: color,
-                emissiveIntensity: 0.5
+                emissiveIntensity: 0.8,
+                roughness: 0.3,
+                metalness: 0.2
             });
             const sphere = new THREE.Mesh(geometry, material);
 
-            // Position in horizontal row (shifted up slightly)
-            sphere.position.set(
-                (index - 2.5) * 0.12,
-                0.03, // Shifted up
-                0
-            );
+            // Position in arc
+            const angle = arcStartAngle - (angleStep * index);
+            const x = Math.cos(angle) * arcRadius;
+            const y = Math.sin(angle) * arcRadius * 0.5 + 0.15; // Compressed vertically, shifted up
 
-            sphere.userData = { colorIndex: index };
+            sphere.position.set(x, y, 0);
+            sphere.userData = {
+                colorIndex: index,
+                defaultScale: 1.0,
+                hoverScale: 1.2
+            };
             this.colorSpheres.push(sphere);
             this.paletteGroup.add(sphere);
+
+            // Color label below each sphere
+            const label = this.createLabel(colorNames[index], 0x888888);
+            label.scale.setScalar(0.3);
+            label.position.set(x, y - 0.08, 0.01);
+            this.paletteGroup.add(label);
         });
 
-        // Position panel in front of user at chest height
-        this.paletteGroup.position.set(0, 1.2, -0.6);
+        // Brush Size Selector (S, M, L)
+        const sizes = [
+            { label: 'S', size: 0.002, radius: 0.015 },
+            { label: 'M', size: 0.005, radius: 0.020 },
+            { label: 'L', size: 0.010, radius: 0.025 }
+        ];
+
+        const sizeButtons: THREE.Mesh[] = [];
+        sizes.forEach((sizeOption, index) => {
+            // Create circular button with size-appropriate radius
+            const geometry = new THREE.CircleGeometry(sizeOption.radius, 32);
+            const material = new THREE.MeshStandardMaterial({
+                color: 0x4cc9f0,
+                emissive: 0x4cc9f0,
+                emissiveIntensity: 0.3,
+                roughness: 0.3,
+                metalness: 0.2,
+                transparent: true,
+                opacity: 0.8
+            });
+            const button = new THREE.Mesh(geometry, material);
+
+            // Position horizontally below active color
+            const xPos = (index - 1) * 0.07; // Centered, spaced 0.07m apart
+            button.position.set(xPos, -0.12, 0.02);
+
+            button.userData = {
+                isSizeButton: true,
+                size: sizeOption.size,
+                sizeIndex: index,
+                defaultScale: 1.0,
+                hoverScale: 1.15
+            };
+
+            sizeButtons.push(button);
+            this.paletteGroup.add(button);
+
+            // Size label
+            const label = this.createLabel(sizeOption.label, 0xaaaaaa);
+            label.scale.setScalar(0.25);
+            label.position.set(xPos, -0.12, 0.03);
+            this.paletteGroup.add(label);
+        });
+
+        // Store size buttons for later access
+        this.paletteGroup.userData.sizeButtons = sizeButtons;
+
+        // Set default size (Medium)
+        this.drawingSystem.setSize(0.005);
+        (sizeButtons[1].material as THREE.MeshStandardMaterial).emissiveIntensity = 0.8;
+        sizeButtons[1].scale.setScalar(1.2);
+
+
+        // Larger Undo Button (33% bigger)
+        this.undoButton = this.createButton("Undo", 0.20, 0.08);
+        this.undoButton.position.set(-0.1, -0.22, 0.02);
+        this.undoButton.userData = {
+            isButton: true,
+            action: 'undo',
+            defaultScale: 1.0,
+            hoverScale: 1.1
+        };
+        this.paletteGroup.add(this.undoButton);
+
+        // Larger Clear Button (33% bigger)
+        this.clearButton = this.createButton("Clear", 0.20, 0.08);
+        this.clearButton.position.set(0.1, -0.22, 0.02);
+        this.clearButton.userData = {
+            isButton: true,
+            action: 'clear',
+            defaultScale: 1.0,
+            hoverScale: 1.1,
+            requiresConfirmation: false
+        };
+        this.paletteGroup.add(this.clearButton);
+
+        // Position palette for better VR ergonomics
+        // Lower height (1.3m) and closer distance (0.5m)
+        this.paletteGroup.position.set(0, 1.3, -0.5);
+
+        // Tilt 15° upward for better viewing angle
+        this.paletteGroup.rotation.x = Math.PI / 12;
+
         this.scene.add(this.paletteGroup);
     }
 
-    private createLabel(text: string): THREE.Mesh {
+    private createLabel(text: string, color: number = 0x888888): THREE.Mesh {
         const canvas = document.createElement('canvas');
         const context = canvas.getContext('2d');
         // High resolution for crisp text
@@ -395,8 +582,9 @@ class App {
             context.fillStyle = 'rgba(0,0,0,0)';
             context.clearRect(0, 0, canvas.width, canvas.height);
 
-            context.font = 'Bold 80px Arial'; // Scaled up font
-            context.fillStyle = '#888888';
+            context.font = 'Bold 80px Arial';
+            const hexColor = '#' + color.toString(16).padStart(6, '0');
+            context.fillStyle = hexColor;
             context.textAlign = 'center';
             context.textBaseline = 'middle';
             context.fillText(text, canvas.width / 2, canvas.height / 2);
@@ -439,21 +627,20 @@ class App {
             context.quadraticCurveTo(0, 0, radius, 0);
             context.closePath();
 
-            // White background (matching palette)
-            context.fillStyle = '#ffffff';
+            // Dark semi-transparent background (matching glassmorphism theme)
+            context.fillStyle = 'rgba(26, 26, 46, 0.6)';
             context.fill();
 
-            // Light gray border - thicker for visibility
+            // Cyan glowing border
             context.lineWidth = 20;
-            context.strokeStyle = '#cccccc';
+            context.strokeStyle = '#00d4ff';
             context.stroke();
 
-            // Text - Scaled font
+            // Light text for visibility
             context.font = 'Bold 200px Arial';
-            context.fillStyle = '#333333';
+            context.fillStyle = '#ffffff';
             context.textAlign = 'center';
             context.textBaseline = 'middle';
-            // Slight offset to center vertically better with the border
             context.fillText(text, canvas.width / 2, canvas.height / 2 + 15);
         }
 
@@ -597,23 +784,79 @@ class App {
             if (hand.joints && hand.joints['index-finger-tip']) {
                 const indexTipPos = hand.joints['index-finger-tip'].position;
 
-                // Update Cursor
+                // Update Cursor position and orientation
                 cursor.position.copy(indexTipPos);
                 cursor.visible = true;
 
+                // Rotate cursor for animation
+                cursor.rotation.z += 0.05;
+
+                // Orient cursor to face camera
+                cursor.lookAt(this.camera.position);
+
+                // Match cursor color to brush color when idle
+                const currentColor = this.colorPalette.getActiveColor();
+                const cursorMat = cursor.material as THREE.MeshBasicMaterial;
+                if (!hand.userData.isPinching) {
+                    cursorMat.color.setHex(currentColor);
+                }
+
                 if (hand.userData.isPinching) {
                     this.drawingSystem.updateStroke(hand.userData.id, indexTipPos);
-                    (cursor.material as THREE.MeshBasicMaterial).color.setHex(0x00ff00); // Green when drawing
+                    (cursor.material as THREE.MeshBasicMaterial).color.setHex(0x00ff88); // Bright green when drawing
+
+                    // Emit drawing particles
+                    if (this.lastDrawPosition.distanceTo(indexTipPos) > 0.01) {
+                        this.particleSystem.emitTrail(
+                            indexTipPos,
+                            new THREE.Color(currentColor)
+                        );
+                        this.lastDrawPosition.copy(indexTipPos);
+                    }
                 } else {
-                    (cursor.material as THREE.MeshBasicMaterial).color.setHex(0xffffff); // White when hovering
+                    (cursor.material as THREE.MeshBasicMaterial).color.setHex(currentColor); // Match brush color when idle
                 }
             } else {
                 cursor.visible = false;
             }
         });
 
-        // Check color palette interaction (right hand/controller)
+        // Update Drawing Preview Sphere (right hand only)
         const hand1 = this.hand1 as XRHandWithJoints;
+        if (hand1.joints && hand1.joints['index-finger-tip']) {
+            const indexTipPos = hand1.joints['index-finger-tip'].position;
+            const isDrawing = hand1.userData.isPinching;
+
+            // Show preview when not drawing
+            if (!isDrawing) {
+                this.previewSphere.position.copy(indexTipPos);
+                this.previewSphere.visible = true;
+
+                // Update preview to match current brush settings
+                const currentColor = this.colorPalette.getActiveColor();
+                const currentSize = this.drawingSystem.getSize();
+
+                // Update size if changed
+                const currentScale = this.previewSphere.scale.x;
+                const targetScale = currentSize / 0.005; // 0.005 is base size
+                if (Math.abs(currentScale - targetScale) > 0.01) {
+                    this.previewSphere.scale.setScalar(targetScale);
+                }
+
+                // Update color if changed
+                const material = this.previewSphere.material as THREE.MeshStandardMaterial;
+                if (material.color.getHex() !== currentColor) {
+                    material.color.setHex(currentColor);
+                    material.emissive.setHex(currentColor);
+                }
+            } else {
+                this.previewSphere.visible = false;
+            }
+        } else {
+            this.previewSphere.visible = false;
+        }
+
+        // Check color palette interaction (right hand/controller)
         if (hand1.joints && hand1.joints['index-finger-tip']) {
             const indexTipPos = hand1.joints['index-finger-tip'].position;
             this.checkColorPaletteInteraction(indexTipPos);
@@ -641,6 +884,31 @@ class App {
                 this.drawingSystem.updateStroke(controller.userData.id, position);
             }
         });
+
+        // Animate palette border (pulse effect)
+        if (this.paletteGroup) {
+            const panel = this.paletteGroup.children.find(child => child.userData.border);
+            if (panel && panel.userData.border) {
+                const border = panel.userData.border as THREE.LineLoop;
+                const time = Date.now() * 0.001;
+                (border.material as THREE.LineBasicMaterial).opacity = 0.6 + Math.sin(time * 2) * 0.2;
+            }
+        }
+
+        // Update button states
+        this.updateButtonStates();
+
+        // Update particle system
+        const deltaTime = this.clock.getDelta();
+        this.particleSystem.update(deltaTime);
+
+        // Animate starfield (twinkling)
+        const starfield = this.scene.userData.starfield as THREE.Points;
+        if (starfield) {
+            const time = Date.now() * 0.001;
+            const material = starfield.material as THREE.PointsMaterial;
+            material.opacity = 0.7 + Math.sin(time * 0.5) * 0.1; // Gentle pulsing
+        }
 
         this.renderer.render(this.scene, this.camera);
     }
@@ -687,43 +955,257 @@ class App {
             return;
         }
 
-        // 4. Check Main Slots
+        // 4. Check Main Slots with hover effects
         for (let i = 0; i < this.colorSpheres.length; i++) {
             const sphere = this.colorSpheres[i];
             const worldPos = new THREE.Vector3();
             sphere.getWorldPosition(worldPos);
 
             const distance = fingerPos.distanceTo(worldPos);
-            if (distance < INTERACTION_DISTANCE_SLOT) { // Touch threshold
+            const hoverDistance = INTERACTION_DISTANCE_SLOT * 2; // Larger hover zone
+
+            // Hover effect
+            if (distance < hoverDistance) {
+                sphere.scale.setScalar(sphere.userData.hoverScale);
+                (sphere.material as THREE.MeshStandardMaterial).emissiveIntensity = 1.2;
+            } else {
+                // Reset to default if not active
+                const activeIndex = this.colorPalette.getActiveSlotIndex();
+                if (i !== activeIndex) {
+                    sphere.scale.setScalar(sphere.userData.defaultScale);
+                    (sphere.material as THREE.MeshStandardMaterial).emissiveIntensity = 0.8;
+                }
+            }
+
+            // Touch interaction
+            if (distance < INTERACTION_DISTANCE_SLOT) {
                 const tapType = this.colorPalette.selectSlot(i);
 
                 if (tapType === 'single') {
-                    // Update drawing color
-                    this.drawingSystem.setColor(this.colorPalette.getActiveColor());
+                    const selectedColor = this.colorPalette.getActiveColor();
+                    this.drawingSystem.setColor(selectedColor);
                     this.updatePaletteHighlight();
                     this.closeShadePicker();
+
+                    // Emit particle burst on color selection
+                    this.particleSystem.emitBurst(
+                        worldPos,
+                        new THREE.Color(selectedColor)
+                    );
                 } else if (tapType === 'double') {
                     this.openShadePicker(i);
                 }
                 break;
             }
         }
+
+        // Hover effects for buttons
+        [this.undoButton, this.clearButton].forEach(button => {
+            // Skip if button is disabled
+            if (button.userData.disabled) {
+                return;
+            }
+
+            const worldPos = new THREE.Vector3();
+            button.getWorldPosition(worldPos);
+            const distance = fingerPos.distanceTo(worldPos);
+            const hoverDistance = INTERACTION_DISTANCE_BUTTON * 1.5;
+
+            if (distance < hoverDistance) {
+                button.scale.setScalar(button.userData.hoverScale);
+            } else {
+                button.scale.setScalar(button.userData.defaultScale);
+            }
+        });
+
+        // Hover and interaction for size buttons
+        const sizeButtons = this.paletteGroup.userData.sizeButtons as THREE.Mesh[];
+        if (sizeButtons) {
+            sizeButtons.forEach((button, index) => {
+                const worldPos = new THREE.Vector3();
+                button.getWorldPosition(worldPos);
+                const distance = fingerPos.distanceTo(worldPos);
+                const hoverDistance = INTERACTION_DISTANCE_BUTTON * 1.5;
+
+                // Hover effect (only if not active)
+                const currentSize = this.drawingSystem.getSize();
+                const isActive = Math.abs(button.userData.size - currentSize) < 0.001;
+
+                if (distance < hoverDistance && !isActive) {
+                    button.scale.setScalar(button.userData.hoverScale);
+                } else if (!isActive) {
+                    button.scale.setScalar(button.userData.defaultScale);
+                }
+
+                // Click interaction
+                if (distance < INTERACTION_DISTANCE_BUTTON) {
+                    // Update size in drawing system
+                    this.drawingSystem.setSize(button.userData.size);
+
+                    // Update visual feedback for all size buttons
+                    sizeButtons.forEach((btn, idx) => {
+                        const mat = btn.material as THREE.MeshStandardMaterial;
+                        if (idx === index) {
+                            mat.emissiveIntensity = 0.8;
+                            btn.scale.setScalar(1.2);
+                        } else {
+                            mat.emissiveIntensity = 0.3;
+                            btn.scale.setScalar(1.0);
+                        }
+                    });
+                }
+            });
+        }
     }
 
     private updatePaletteHighlight(): void {
         const activeIndex = this.colorPalette.getActiveSlotIndex();
+        const activeColor = this.colorPalette.getActiveColor();
+
+        // Update active color indicator
+        const activeIndicator = this.paletteGroup.children.find(
+            child => child.userData.isActiveIndicator
+        ) as THREE.Mesh;
+        if (activeIndicator && activeIndicator.material instanceof THREE.MeshStandardMaterial) {
+            activeIndicator.material.color.setHex(activeColor);
+            activeIndicator.material.emissive.setHex(activeColor);
+        }
 
         this.colorSpheres.forEach((sphere, index) => {
             const material = sphere.material as THREE.MeshStandardMaterial;
             if (index === activeIndex) {
                 // Highlight active color
-                material.emissiveIntensity = 0.8;
+                material.emissiveIntensity = 1.2;
                 sphere.scale.setScalar(1.3);
             } else {
-                material.emissiveIntensity = 0.3;
+                material.emissiveIntensity = 0.8;
                 sphere.scale.setScalar(1.0);
             }
         });
+    }
+
+    private updateButtonStates(): void {
+        // Update Undo button state
+        const canUndo = this.drawingSystem.canUndo();
+        const undoMaterial = this.undoButton.material as THREE.MeshBasicMaterial;
+        if (canUndo) {
+            undoMaterial.opacity = 1.0;
+            this.undoButton.userData.disabled = false;
+        } else {
+            undoMaterial.opacity = 0.4;
+            this.undoButton.userData.disabled = true;
+            this.undoButton.scale.setScalar(1.0); // Reset scale if disabled
+        }
+
+        // Update Clear button state (always enabled if there are strokes)
+        const clearMaterial = this.clearButton.material as THREE.MeshBasicMaterial;
+        if (canUndo) { // Same condition as undo
+            clearMaterial.opacity = 1.0;
+            this.clearButton.userData.disabled = false;
+        } else {
+            clearMaterial.opacity = 0.4;
+            this.clearButton.userData.disabled = true;
+            this.clearButton.scale.setScalar(1.0);
+        }
+    }
+
+    private createStarfield(): void {
+        // Create starfield with thousands of stars
+        const starCount = 2000;
+        const positions: number[] = [];
+        const colors: number[] = [];
+        const sizes: number[] = [];
+
+        const starColors = [
+            new THREE.Color(0xffffff), // White
+            new THREE.Color(0x00d4ff), // Cyan
+            new THREE.Color(0x9d4edd), // Purple
+        ];
+
+        for (let i = 0; i < starCount; i++) {
+            // Random position in a large sphere
+            const radius = 50 + Math.random() * 50;
+            const theta = Math.random() * Math.PI * 2;
+            const phi = Math.acos((Math.random() * 2) - 1);
+
+            const x = radius * Math.sin(phi) * Math.cos(theta);
+            const y = radius * Math.sin(phi) * Math.sin(theta);
+            const z = radius * Math.cos(phi);
+
+            positions.push(x, y, z);
+
+            // Random color (mostly white, some colored)
+            const colorChoice = Math.random();
+            let color: THREE.Color;
+            if (colorChoice < 0.7) {
+                color = starColors[0]; // 70% white
+            } else if (colorChoice < 0.85) {
+                color = starColors[1]; // 15% cyan
+            } else {
+                color = starColors[2]; // 15% purple
+            }
+
+            colors.push(color.r, color.g, color.b);
+
+            // Random size
+            sizes.push(0.5 + Math.random() * 1.5);
+        }
+
+        const geometry = new THREE.BufferGeometry();
+        geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+        geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+        geometry.setAttribute('size', new THREE.Float32BufferAttribute(sizes, 1));
+
+        const material = new THREE.PointsMaterial({
+            size: 1.0,
+            sizeAttenuation: true,
+            vertexColors: true,
+            transparent: true,
+            opacity: 0.8,
+            blending: THREE.AdditiveBlending
+        });
+
+        const stars = new THREE.Points(geometry, material);
+        this.scene.add(stars);
+
+        // Store for animation
+        this.scene.userData.starfield = stars;
+
+        // Set dark background color
+        this.scene.background = new THREE.Color(0x000510);
+    }
+
+    private createAmbientParticles(): void {
+        // Emit ambient particles throughout the environment
+        const colors = [
+            new THREE.Color(0x00d4ff), // Cyan
+            new THREE.Color(0x9d4edd), // Purple
+            new THREE.Color(0xffffff)  // White
+        ];
+
+        for (let i = 0; i < 80; i++) {
+            const position = new THREE.Vector3(
+                (Math.random() - 0.5) * 10,
+                Math.random() * 5,
+                (Math.random() - 0.5) * 10
+            );
+
+            const color = colors[Math.floor(Math.random() * colors.length)];
+
+            this.particleSystem.emit({
+                position,
+                color,
+                count: 1,
+                velocity: new THREE.Vector3(
+                    (Math.random() - 0.5) * 0.05,
+                    (Math.random() - 0.5) * 0.05,
+                    (Math.random() - 0.5) * 0.05
+                ),
+                spread: 0,
+                lifetime: 999, // Very long lifetime for ambient particles
+                size: 0.01
+            });
+        }
     }
 
     private openShadePicker(slotIndex: number): void {
