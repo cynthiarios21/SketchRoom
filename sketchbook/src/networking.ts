@@ -110,7 +110,7 @@ export class NetworkManager extends SimpleEventEmitter {
         // For local testing, we don't need to do anything else as we see our own stroke.
         // But to prove networking works, let's make the "mock peer" draw something back 
         // a few seconds after we draw.
-        this.mockPeerResponse();
+        // this.mockPeerResponse();
     }
 
     private mockPeerResponse(): void {
