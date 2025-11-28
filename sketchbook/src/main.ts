@@ -562,8 +562,8 @@ class App {
         this.paletteGroup.add(this.clearButton);
 
         // Position palette for better VR ergonomics
-        // Lower height (1.3m) and closer distance (0.5m)
-        this.paletteGroup.position.set(0, 1.3, -0.5);
+        // Lower height (1.3m) and closer distance (0.3m for easy reach)
+        this.paletteGroup.position.set(0, 1.3, -0.3);
 
         // Tilt 15° upward for better viewing angle
         this.paletteGroup.rotation.x = Math.PI / 12;
